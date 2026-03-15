@@ -235,13 +235,14 @@ class TestPlatformPopen:
     def test_sync_uses_creationflags_on_windows(self):
         output = json.dumps({"result": "OK"})
         runner = ClaudeRunner(accounts=[None])
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
         with patch("claude_rotator.runner.sys") as mock_sys:
             mock_sys.platform = "win32"
             with patch("claude_rotator.runner.subprocess") as mock_sp:
                 mock_sp.Popen.return_value = _make_popen(output)
                 mock_sp.PIPE = subprocess.PIPE
-                mock_sp.CREATE_NEW_PROCESS_GROUP = subprocess.CREATE_NEW_PROCESS_GROUP
+                mock_sp.CREATE_NEW_PROCESS_GROUP = CREATE_NEW_PROCESS_GROUP
                 runner.run(prompt="test")
         kwargs = mock_sp.Popen.call_args[1]
-        assert kwargs.get("creationflags") == subprocess.CREATE_NEW_PROCESS_GROUP
+        assert kwargs.get("creationflags") == CREATE_NEW_PROCESS_GROUP
         assert "start_new_session" not in kwargs
