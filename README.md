@@ -2,6 +2,8 @@
 
 Run Claude CLI (`claude -p`) subprocesses with automatic multi-account rotation and rate limit handling. Zero dependencies.
 
+Available in [Python](https://github.com/jtxmp/claude-rotator), [TypeScript](https://github.com/jtxmp/claude-rotator/tree/master/npm), and [Rust](https://github.com/jtxmp/claude-rotator/tree/master/rust).
+
 ## Install
 
 ```bash
@@ -101,3 +103,7 @@ runner = ClaudeRunner(accounts=[None, "/home/user/.claude_alt"])
 ## License
 
 MIT
+
+---
+
+Made with <3 at Bitcoin.com
