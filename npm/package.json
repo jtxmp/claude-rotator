@@ -1,0 +1,50 @@
+{
+  "name": "claude-rotator",
+  "version": "1.0.0",
+  "description": "Run Claude CLI subprocesses with automatic multi-account rotation and rate limit handling",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "cli",
+    "subprocess",
+    "rate-limit",
+    "account-rotation",
+    "multi-account"
+  ],
+  "author": "jtxmp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jtxmp/claude-rotator.git",
+    "directory": "npm"
+  },
+  "bugs": {
+    "url": "https://github.com/jtxmp/claude-rotator/issues"
+  },
+  "homepage": "https://github.com/jtxmp/claude-rotator#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}

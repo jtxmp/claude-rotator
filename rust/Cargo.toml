@@ -1,0 +1,27 @@
+[package]
+name = "claude-rotator"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Run Claude CLI subprocesses with automatic multi-account rotation and rate limit handling"
+license = "MIT"
+authors = ["jtxmp"]
+repository = "https://github.com/jtxmp/claude-rotator"
+keywords = ["claude", "cli", "subprocess", "rate-limit", "multi-account"]
+categories = ["development-tools", "command-line-utilities"]
+
+[dependencies]
+serde_json = "1"
+regex = "1"
+
+[dependencies.tokio]
+version = "1"
+features = ["process", "time", "rt", "io-util", "macros"]
+optional = true
+
+[features]
+default = []
+async = ["tokio"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials.json
+serviceAccountKey.json
+secrets.yaml
+secrets.json
+.secret
+*.secret
+token.json
+auth.json
+config.local.*
+
+# Internal docs and Claude Code config
+.docs/
+.claude/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+
+# Rust build
+rust/target/
+
+# Build
+*.sqlite
+*.db
