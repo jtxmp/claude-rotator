@@ -11,23 +11,35 @@ from claude_rotator.rate_limit import (
 
 
 class TestIsUsageLimited:
-    def test_detects_out_of_extra_usage(self):
-        assert is_usage_limited("You are out of extra usage for today", "")
+    def test_detects_out_of_extra_usage_in_stderr(self):
+        assert is_usage_limited("", "You are out of extra usage for today")
 
-    def test_detects_usage_limit(self):
+    def test_detects_usage_limit_in_stderr(self):
         assert is_usage_limited("", "usage limit reached")
 
-    def test_detects_rate_limit(self):
-        assert is_usage_limited("rate limit exceeded", "")
+    def test_detects_rate_limit_in_stderr(self):
+        assert is_usage_limited("", "rate limit exceeded")
 
     def test_case_insensitive(self):
-        assert is_usage_limited("USAGE LIMIT", "")
+        assert is_usage_limited("", "USAGE LIMIT")
 
     def test_no_limit_phrases(self):
         assert not is_usage_limited("Hello world", "some error")
 
     def test_empty_strings(self):
         assert not is_usage_limited("", "")
+
+    def test_ignores_stdout_content(self):
+        """Rate limit phrases in stdout should not trigger detection (false positive prevention)."""
+        assert not is_usage_limited("You hit the usage limit", "")
+
+    def test_ignores_rate_limit_in_stdout_only(self):
+        """A user prompt echoing 'rate limit' in stdout should not cause rotation."""
+        assert not is_usage_limited("rate limit exceeded", "")
+
+    def test_detects_when_phrase_in_stderr_with_noisy_stdout(self):
+        """Detection works when stderr has the phrase, regardless of stdout content."""
+        assert is_usage_limited("normal output", "usage limit reached")
 
 
 class TestParseResetTime:

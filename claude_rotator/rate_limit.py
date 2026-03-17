@@ -51,9 +51,13 @@ class RateLimitCache:
 
 
 def is_usage_limited(stdout: str, stderr: str) -> bool:
-    """Check if the output indicates a usage limit error."""
-    combined = (stdout + stderr).lower()
-    return any(phrase in combined for phrase in USAGE_LIMIT_PHRASES)
+    """Check if stderr indicates a usage limit error.
+
+    Only checks stderr to avoid false positives from user prompts or
+    Claude responses that mention rate limits in stdout.
+    """
+    text = stderr.lower()
+    return any(phrase in text for phrase in USAGE_LIMIT_PHRASES)
 
 
 def parse_reset_time(stdout: str, stderr: str) -> datetime | None:

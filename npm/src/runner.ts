@@ -1,5 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { platform } from "node:os";
+import { resolve } from "node:path";
 import { ClaudeError } from "./errors.js";
 import { RateLimitCache, isUsageLimited } from "./rate-limit.js";
 
@@ -22,7 +24,25 @@ export interface ClaudeRunnerOptions {
   accounts?: Array<string | null>;
 }
 
+const MAX_OUTPUT_BYTES = 50 * 1024 * 1024; // 50 MB
+
+const VALID_MODEL_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const VALID_TOOLS_PATTERN = /^[A-Za-z_]+(,[A-Za-z_]+)*$/;
+
+function validateInputs(
+  model: string,
+  tools: string | null | undefined,
+): void {
+  if (!VALID_MODEL_PATTERN.test(model)) {
+    throw new Error(`Invalid model identifier: ${model}`);
+  }
+  if (tools && !VALID_TOOLS_PATTERN.test(tools)) {
+    throw new Error(`Invalid tools specification: ${tools}`);
+  }
+}
+
 function buildCmd(model: string, tools: string | null | undefined): string[] {
+  validateInputs(model, tools);
   const cmd = ["claude", "-p", "--model", model, "--output-format", "json"];
   if (tools) {
     cmd.push("--allowedTools", tools);
@@ -33,9 +53,19 @@ function buildCmd(model: string, tools: string | null | undefined): string[] {
 function buildEnv(homeDir: string | null): NodeJS.ProcessEnv {
   const env = { ...process.env };
   if (homeDir) {
-    env.HOME = homeDir;
+    const resolved = resolve(homeDir);
+    try {
+      if (!statSync(resolved).isDirectory()) {
+        throw new Error(`Account homeDir is not a directory: ${resolved}`);
+      }
+    } catch (e: any) {
+      if (e.code === "ENOENT")
+        throw new Error(`Account homeDir does not exist: ${resolved}`);
+      throw e;
+    }
+    env.HOME = resolved;
     if (platform() === "win32") {
-      env.USERPROFILE = homeDir;
+      env.USERPROFILE = resolved;
     }
   }
   return env;
@@ -97,7 +127,7 @@ export class ClaudeRunner {
     const {
       prompt,
       model = "sonnet",
-      tools = "Read,Write",
+      tools = null,
       cwd,
       timeout = 600,
     } = options;
@@ -105,6 +135,20 @@ export class ClaudeRunner {
     const cmd = buildCmd(model, tools);
     const [command, ...args] = cmd;
     const isWin = platform() === "win32";
+
+    let resolvedCwd: string | undefined;
+    if (cwd) {
+      resolvedCwd = resolve(cwd);
+      try {
+        if (!statSync(resolvedCwd).isDirectory()) {
+          throw new Error(`cwd is not a directory: ${resolvedCwd}`);
+        }
+      } catch (e: any) {
+        if (e.code === "ENOENT")
+          throw new Error(`cwd does not exist: ${resolvedCwd}`);
+        throw e;
+      }
+    }
 
     for (let i = 0; i < this.accounts.length; i++) {
       const homeDir = this.accounts[i];
@@ -118,17 +162,21 @@ export class ClaudeRunner {
         stderr: string;
         exitCode: number | null;
         timedOut: boolean;
-      }>((resolve) => {
+        outputExceeded: boolean;
+      }>((resolvePromise) => {
         const child = spawn(command, args, {
           stdio: ["pipe", "pipe", "pipe"],
           env,
-          cwd,
+          cwd: resolvedCwd,
           detached: !isWin,
         });
 
         let stdout = "";
         let stderr = "";
+        let stdoutLen = 0;
+        let stderrLen = 0;
         let timedOut = false;
+        let outputExceeded = false;
         let settled = false;
 
         const timer = setTimeout(() => {
@@ -137,9 +185,21 @@ export class ClaudeRunner {
         }, timeout * 1000);
 
         child.stdout.on("data", (chunk: Buffer) => {
+          stdoutLen += chunk.length;
+          if (stdoutLen > MAX_OUTPUT_BYTES) {
+            outputExceeded = true;
+            killProcessTree(child.pid);
+            return;
+          }
           stdout += chunk.toString();
         });
         child.stderr.on("data", (chunk: Buffer) => {
+          stderrLen += chunk.length;
+          if (stderrLen > MAX_OUTPUT_BYTES) {
+            outputExceeded = true;
+            killProcessTree(child.pid);
+            return;
+          }
           stderr += chunk.toString();
         });
 
@@ -147,18 +207,25 @@ export class ClaudeRunner {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          resolve({ stdout, stderr, exitCode: code, timedOut });
+          resolvePromise({
+            stdout,
+            stderr,
+            exitCode: code,
+            timedOut,
+            outputExceeded,
+          });
         });
 
         child.on("error", (err) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          resolve({
+          resolvePromise({
             stdout,
             stderr: err.message,
             exitCode: 1,
             timedOut: false,
+            outputExceeded: false,
           });
         });
 
@@ -168,6 +235,13 @@ export class ClaudeRunner {
 
       if (result.timedOut) {
         throw new ClaudeError(`Timeout after ${timeout}s`, -1);
+      }
+
+      if (result.outputExceeded) {
+        throw new ClaudeError(
+          "Subprocess output exceeded maximum allowed size",
+          -1,
+        );
       }
 
       const durationSeconds = (performance.now() - start) / 1000;

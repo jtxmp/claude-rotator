@@ -6,12 +6,19 @@ import os
 import signal
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from claude_rotator import ClaudeError, ClaudeResult, ClaudeRunner
-from claude_rotator.runner import _build_env, _kill_process_tree
+from claude_rotator.runner import (
+    MAX_OUTPUT_BYTES,
+    _build_cmd,
+    _build_env,
+    _kill_process_tree,
+    _validate_inputs,
+)
 
 
 def _make_popen(stdout: str, stderr: str = "", returncode: int = 0):
@@ -21,6 +28,69 @@ def _make_popen(stdout: str, stderr: str = "", returncode: int = 0):
     proc.returncode = returncode
     proc.pid = 12345
     return proc
+
+
+class TestValidateInputs:
+    def test_valid_model_short_alias(self):
+        _validate_inputs("sonnet", None)
+
+    def test_valid_model_full_id(self):
+        _validate_inputs("claude-sonnet-4-5-20250514", None)
+
+    def test_valid_model_with_dots(self):
+        _validate_inputs("claude.sonnet.4.5", None)
+
+    def test_invalid_model_with_spaces(self):
+        with pytest.raises(ValueError, match="Invalid model"):
+            _validate_inputs("sonnet --dangerous-flag", None)
+
+    def test_invalid_model_with_double_dash(self):
+        # Double dashes within an alphanumeric string are fine (e.g. claude-sonnet-4-5)
+        # but standalone flags should be caught by the whitespace check
+        with pytest.raises(ValueError, match="Invalid model"):
+            _validate_inputs("sonnet --flag", None)
+
+    def test_invalid_model_empty(self):
+        with pytest.raises(ValueError, match="Invalid model"):
+            _validate_inputs("", None)
+
+    def test_invalid_model_starts_with_dash(self):
+        with pytest.raises(ValueError, match="Invalid model"):
+            _validate_inputs("-sonnet", None)
+
+    def test_valid_tools(self):
+        _validate_inputs("sonnet", "Read,Write")
+
+    def test_valid_tools_single(self):
+        _validate_inputs("sonnet", "Read")
+
+    def test_valid_tools_with_underscores(self):
+        _validate_inputs("sonnet", "Read_File,Write_File")
+
+    def test_invalid_tools_with_spaces(self):
+        with pytest.raises(ValueError, match="Invalid tools"):
+            _validate_inputs("sonnet", "Read, Write")
+
+    def test_invalid_tools_with_flags(self):
+        with pytest.raises(ValueError, match="Invalid tools"):
+            _validate_inputs("sonnet", "Read --inject")
+
+    def test_invalid_tools_with_numbers(self):
+        with pytest.raises(ValueError, match="Invalid tools"):
+            _validate_inputs("sonnet", "Read123")
+
+    def test_tools_none_is_valid(self):
+        _validate_inputs("sonnet", None)
+
+
+class TestBuildCmd:
+    def test_rejects_invalid_model(self):
+        with pytest.raises(ValueError):
+            _build_cmd("sonnet --flag", None)
+
+    def test_rejects_invalid_tools(self):
+        with pytest.raises(ValueError):
+            _build_cmd("sonnet", "Read --inject")
 
 
 class TestClaudeRunnerSync:
@@ -56,28 +126,35 @@ class TestClaudeRunnerSync:
                 runner.run(prompt="test")
         assert exc_info.value.returncode == 2
 
-    def test_account_rotation_on_rate_limit(self):
-        rate_limited = _make_popen("You hit the usage limit", returncode=0)
+    def test_account_rotation_on_rate_limit(self, tmp_path):
+        # Rate limit phrase must be in stderr now
+        rate_limited = _make_popen("", stderr="You hit the usage limit", returncode=0)
         success_output = json.dumps({"result": "OK", "total_cost_usd": 0.02})
         success = _make_popen(success_output, returncode=0)
 
-        runner = ClaudeRunner(accounts=[None, "/fallback"])
+        fallback = str(tmp_path / "fallback")
+        os.makedirs(fallback)
+        runner = ClaudeRunner(accounts=[None, fallback])
         with patch("claude_rotator.runner.subprocess.Popen", side_effect=[rate_limited, success]):
             result = runner.run(prompt="test")
         assert result.output == "OK"
 
-    def test_all_accounts_exhausted_raises(self):
-        rate_limited = _make_popen("usage limit reached", returncode=0)
-        runner = ClaudeRunner(accounts=[None, "/fallback"])
+    def test_all_accounts_exhausted_raises(self, tmp_path):
+        rate_limited = _make_popen("", stderr="usage limit reached", returncode=0)
+        fallback = str(tmp_path / "fallback")
+        os.makedirs(fallback)
+        runner = ClaudeRunner(accounts=[None, fallback])
         with patch("claude_rotator.runner.subprocess.Popen", return_value=rate_limited):
             with pytest.raises(ClaudeError, match="All Claude accounts"):
                 runner.run(prompt="test")
 
-    def test_skips_cached_rate_limited_accounts(self):
+    def test_skips_cached_rate_limited_accounts(self, tmp_path):
         """When an account is cached as rate-limited, it should be skipped."""
         success_output = json.dumps({"result": "OK", "total_cost_usd": 0.0})
         success = _make_popen(success_output)
-        runner = ClaudeRunner(accounts=[None, "/fallback"])
+        fallback = str(tmp_path / "fallback")
+        os.makedirs(fallback)
+        runner = ClaudeRunner(accounts=[None, fallback])
 
         # Pre-cache the first account as rate-limited
         from datetime import datetime, timedelta, timezone
@@ -120,9 +197,31 @@ class TestClaudeRunnerSync:
         cmd = mock_popen.call_args[0][0]
         assert "--allowedTools" not in cmd
 
+    def test_default_tools_is_none(self):
+        """Default tools should be None (no tools restriction), not Read,Write."""
+        output = json.dumps({"result": "OK"})
+        runner = ClaudeRunner(accounts=[None])
+        with patch("claude_rotator.runner.subprocess.Popen", return_value=_make_popen(output)) as mock_popen:
+            runner.run(prompt="test")
+        cmd = mock_popen.call_args[0][0]
+        assert "--allowedTools" not in cmd
+
     def test_default_accounts_is_none(self):
         runner = ClaudeRunner()
         assert runner.accounts == [None]
+
+    def test_invalid_cwd_raises(self):
+        runner = ClaudeRunner(accounts=[None])
+        with pytest.raises(ValueError, match="cwd is not an existing directory"):
+            runner.run(prompt="test", cwd="/nonexistent/path/abc123")
+
+    def test_output_size_limit(self):
+        huge_stdout = "x" * (MAX_OUTPUT_BYTES + 1)
+        runner = ClaudeRunner(accounts=[None])
+        proc = _make_popen(huge_stdout)
+        with patch("claude_rotator.runner.subprocess.Popen", return_value=proc):
+            with pytest.raises(ClaudeError, match="exceeded maximum"):
+                runner.run(prompt="test")
 
 
 class TestClaudeRunnerAsync:
@@ -145,15 +244,17 @@ class TestClaudeRunnerAsync:
         assert result.cost_usd == 0.03
         assert result.model == "opus"
 
-    def test_async_rate_limit_rotation(self):
-        rate_limited_output = b"You hit the usage limit"
+    def test_async_rate_limit_rotation(self, tmp_path):
         success_output = json.dumps({"result": "OK", "total_cost_usd": 0.0}).encode()
+        fallback = str(tmp_path / "fallback")
+        os.makedirs(fallback)
 
         async def _run():
-            runner = ClaudeRunner(accounts=[None, "/fallback"])
+            runner = ClaudeRunner(accounts=[None, fallback])
 
+            # Rate limit phrase in stderr
             proc1 = AsyncMock()
-            proc1.communicate.return_value = (rate_limited_output, b"")
+            proc1.communicate.return_value = (b"", b"You hit the usage limit")
             proc1.returncode = 0
             proc1.pid = 11111
 
@@ -171,22 +272,35 @@ class TestClaudeRunnerAsync:
         result = asyncio.run(_run())
         assert result.output == "OK"
 
+    def test_async_invalid_cwd_raises(self):
+        async def _run():
+            runner = ClaudeRunner(accounts=[None])
+            return await runner.run_async(prompt="test", cwd="/nonexistent/path/abc123")
+
+        with pytest.raises(ValueError, match="cwd is not an existing directory"):
+            asyncio.run(_run())
+
 
 class TestBuildEnv:
     def test_no_home_dir_returns_current_env(self):
         env = _build_env(None)
         assert env == {**os.environ}
 
-    def test_sets_home_on_unix(self):
-        env = _build_env("/custom/home")
-        assert env["HOME"] == "/custom/home"
+    def test_sets_home_on_unix(self, tmp_path):
+        env = _build_env(str(tmp_path))
+        assert env["HOME"] == str(tmp_path.resolve())
 
     @patch("claude_rotator.runner.sys")
-    def test_sets_userprofile_on_windows(self, mock_sys):
+    def test_sets_userprofile_on_windows(self, mock_sys, tmp_path):
         mock_sys.platform = "win32"
-        env = _build_env("C:\\Users\\alt")
-        assert env["HOME"] == "C:\\Users\\alt"
-        assert env["USERPROFILE"] == "C:\\Users\\alt"
+        env = _build_env(str(tmp_path))
+        resolved = str(tmp_path.resolve())
+        assert env["HOME"] == resolved
+        assert env["USERPROFILE"] == resolved
+
+    def test_nonexistent_home_dir_raises(self):
+        with pytest.raises(ValueError, match="not an existing directory"):
+            _build_env("/nonexistent/path/abc123")
 
 
 class TestKillProcessTree:

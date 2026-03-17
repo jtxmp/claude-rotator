@@ -5,8 +5,8 @@ const USAGE_LIMIT_PHRASES = [
 ];
 
 export function isUsageLimited(stdout: string, stderr: string): boolean {
-  const combined = (stdout + stderr).toLowerCase();
-  return USAGE_LIMIT_PHRASES.some((phrase) => combined.includes(phrase));
+  const text = stderr.toLowerCase();
+  return USAGE_LIMIT_PHRASES.some((phrase) => text.includes(phrase));
 }
 
 export function parseResetTime(stdout: string, stderr: string): Date | null {

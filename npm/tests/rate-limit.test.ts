@@ -6,22 +6,22 @@ import {
 } from "../src/rate-limit.js";
 
 describe("isUsageLimited", () => {
-  it("detects 'out of extra usage'", () => {
-    expect(isUsageLimited("You are out of extra usage for today", "")).toBe(
-      true,
-    );
+  it("detects 'out of extra usage' in stderr", () => {
+    expect(
+      isUsageLimited("", "You are out of extra usage for today"),
+    ).toBe(true);
   });
 
-  it("detects 'usage limit'", () => {
+  it("detects 'usage limit' in stderr", () => {
     expect(isUsageLimited("", "usage limit reached")).toBe(true);
   });
 
-  it("detects 'rate limit'", () => {
-    expect(isUsageLimited("rate limit exceeded", "")).toBe(true);
+  it("detects 'rate limit' in stderr", () => {
+    expect(isUsageLimited("", "rate limit exceeded")).toBe(true);
   });
 
   it("is case insensitive", () => {
-    expect(isUsageLimited("USAGE LIMIT", "")).toBe(true);
+    expect(isUsageLimited("", "USAGE LIMIT")).toBe(true);
   });
 
   it("returns false when no phrases match", () => {
@@ -30,6 +30,20 @@ describe("isUsageLimited", () => {
 
   it("returns false for empty strings", () => {
     expect(isUsageLimited("", "")).toBe(false);
+  });
+
+  it("ignores stdout content (false positive prevention)", () => {
+    expect(isUsageLimited("You hit the usage limit", "")).toBe(false);
+  });
+
+  it("ignores rate limit in stdout only", () => {
+    expect(isUsageLimited("rate limit exceeded", "")).toBe(false);
+  });
+
+  it("detects when phrase in stderr with noisy stdout", () => {
+    expect(isUsageLimited("normal output", "usage limit reached")).toBe(
+      true,
+    );
   });
 });
 

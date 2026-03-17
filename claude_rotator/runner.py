@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -17,6 +18,19 @@ from .errors import ClaudeError
 from .rate_limit import RateLimitCache, is_usage_limited
 
 logger = logging.getLogger(__name__)
+
+MAX_OUTPUT_BYTES = 50 * 1024 * 1024  # 50 MB
+
+VALID_MODEL_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+VALID_TOOLS_PATTERN = re.compile(r"^[A-Za-z_]+(,[A-Za-z_]+)*$")
+
+
+def _validate_inputs(model: str, tools: str | None) -> None:
+    """Validate model and tools arguments against injection attacks."""
+    if not VALID_MODEL_PATTERN.match(model):
+        raise ValueError(f"Invalid model identifier: {model!r}")
+    if tools is not None and not VALID_TOOLS_PATTERN.match(tools):
+        raise ValueError(f"Invalid tools specification: {tools!r}")
 
 
 @dataclass
@@ -30,6 +44,7 @@ class ClaudeResult:
 
 
 def _build_cmd(model: str, allowed_tools: str | None) -> list[str]:
+    _validate_inputs(model, allowed_tools)
     cmd = [
         "claude",
         "-p",
@@ -46,10 +61,14 @@ def _build_cmd(model: str, allowed_tools: str | None) -> list[str]:
 def _build_env(home_dir: str | None) -> dict[str, str]:
     env = {**os.environ}
     if home_dir:
-        env["HOME"] = home_dir
+        resolved = Path(home_dir).resolve()
+        if not resolved.is_dir():
+            raise ValueError(f"Account home_dir is not an existing directory: {resolved}")
+        home_str = str(resolved)
+        env["HOME"] = home_str
         # Windows uses USERPROFILE instead of HOME for the user directory.
         if sys.platform == "win32":
-            env["USERPROFILE"] = home_dir
+            env["USERPROFILE"] = home_str
     return env
 
 
@@ -118,7 +137,7 @@ class ClaudeRunner:
         self,
         prompt: str,
         model: str = "sonnet",
-        tools: str | None = "Read,Write",
+        tools: str | None = None,
         cwd: Path | str | None = None,
         timeout: int = 600,
     ) -> ClaudeResult:
@@ -128,7 +147,13 @@ class ClaudeRunner:
         the next account in the list.
         """
         cmd = _build_cmd(model, tools)
-        cwd_str = str(cwd) if cwd else None
+        if cwd is not None:
+            resolved_cwd = Path(cwd).resolve()
+            if not resolved_cwd.is_dir():
+                raise ValueError(f"cwd is not an existing directory: {resolved_cwd}")
+            cwd_str = str(resolved_cwd)
+        else:
+            cwd_str = None
         is_win = sys.platform == "win32"
 
         popen_kwargs: dict = dict(
@@ -161,6 +186,9 @@ class ClaudeRunner:
                 proc.wait()
                 raise ClaudeError(f"Timeout after {timeout}s", -1)
 
+            if len(stdout) > MAX_OUTPUT_BYTES or len(stderr) > MAX_OUTPUT_BYTES:
+                raise ClaudeError("Subprocess output exceeded maximum allowed size", -1)
+
             duration = time.time() - start
 
             if is_usage_limited(stdout, stderr):
@@ -190,7 +218,7 @@ class ClaudeRunner:
         self,
         prompt: str,
         model: str = "sonnet",
-        tools: str | None = "Read,Write",
+        tools: str | None = None,
         cwd: Path | str | None = None,
         timeout: int = 600,
     ) -> ClaudeResult:
@@ -200,7 +228,13 @@ class ClaudeRunner:
         the next account in the list.
         """
         cmd = _build_cmd(model, tools)
-        cwd_str = str(cwd) if cwd else None
+        if cwd is not None:
+            resolved_cwd = Path(cwd).resolve()
+            if not resolved_cwd.is_dir():
+                raise ValueError(f"cwd is not an existing directory: {resolved_cwd}")
+            cwd_str = str(resolved_cwd)
+        else:
+            cwd_str = None
         is_win = sys.platform == "win32"
 
         for i, home_dir in enumerate(self.accounts):
@@ -233,9 +267,13 @@ class ClaudeRunner:
                 await proc.wait()
                 raise ClaudeError("Timeout exceeded", -1)
 
-            duration = time.time() - start
             stdout = stdout_bytes.decode()
             stderr = stderr_bytes.decode()
+
+            if len(stdout) > MAX_OUTPUT_BYTES or len(stderr) > MAX_OUTPUT_BYTES:
+                raise ClaudeError("Subprocess output exceeded maximum allowed size", -1)
+
+            duration = time.time() - start
 
             if is_usage_limited(stdout, stderr):
                 self._cache.record(home_dir, stdout, stderr)
