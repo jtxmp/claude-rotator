@@ -10,6 +10,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,8 @@ from .rate_limit import RateLimitCache, is_usage_limited
 logger = logging.getLogger(__name__)
 
 MAX_OUTPUT_BYTES = 50 * 1024 * 1024  # 50 MB
+MIN_TIMEOUT = 1
+MAX_TIMEOUT = 3600
 
 VALID_MODEL_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 VALID_TOOLS_PATTERN = re.compile(r"^[A-Za-z_]+(,[A-Za-z_]+)*$")
@@ -31,6 +34,14 @@ def _validate_inputs(model: str, tools: str | None) -> None:
         raise ValueError(f"Invalid model identifier: {model!r}")
     if tools is not None and not VALID_TOOLS_PATTERN.match(tools):
         raise ValueError(f"Invalid tools specification: {tools!r}")
+
+
+def _validate_timeout(timeout: int) -> None:
+    """Validate timeout is within acceptable bounds."""
+    if not MIN_TIMEOUT <= timeout <= MAX_TIMEOUT:
+        raise ValueError(
+            f"Timeout must be between {MIN_TIMEOUT} and {MAX_TIMEOUT} seconds"
+        )
 
 
 @dataclass
@@ -120,6 +131,29 @@ def _kill_process_tree(pid: int) -> None:
             pass
 
 
+def _drain_text_stream(
+    stream, max_size: int, pid: int, exceeded_flag: list[bool]
+) -> str:
+    """Read a text stream with a size limit.
+
+    If the stream exceeds max_size characters, sets exceeded_flag[0] = True
+    and kills the process tree. Returns the data read so far.
+    """
+    chunks: list[str] = []
+    total = 0
+    while True:
+        chunk = stream.read(8192)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_size:
+            exceeded_flag[0] = True
+            _kill_process_tree(pid)
+            return "".join(chunks)
+        chunks.append(chunk)
+    return "".join(chunks)
+
+
 class ClaudeRunner:
     """Runs Claude CLI subprocesses with automatic account rotation on rate limits.
 
@@ -146,6 +180,7 @@ class ClaudeRunner:
         Pipes the prompt via stdin. On usage limit errors, retries with
         the next account in the list.
         """
+        _validate_timeout(timeout)
         cmd = _build_cmd(model, tools)
         if cwd is not None:
             resolved_cwd = Path(cwd).resolve()
@@ -171,7 +206,7 @@ class ClaudeRunner:
 
         for i, home_dir in enumerate(self.accounts):
             if self._cache.is_limited(home_dir):
-                logger.debug(f"Skipping rate-limited account '{home_dir or 'default'}'")
+                logger.debug("Skipping rate-limited account %r", home_dir or "default")
                 continue
 
             start = time.time()
@@ -179,16 +214,51 @@ class ClaudeRunner:
 
             proc = subprocess.Popen(cmd, **popen_kwargs)
 
+            # Write prompt and close stdin
             try:
-                stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
-            except subprocess.TimeoutExpired:
+                if proc.stdin:
+                    proc.stdin.write(prompt)
+                    proc.stdin.close()
+            except OSError:
+                pass
+
+            # Read stdout/stderr concurrently with size limits
+            exceeded = [False]
+            stdout_result: list[str | None] = [None]
+            stderr_result: list[str | None] = [None]
+
+            def _read_stdout():
+                stdout_result[0] = _drain_text_stream(
+                    proc.stdout, MAX_OUTPUT_BYTES, proc.pid, exceeded
+                )
+
+            def _read_stderr():
+                stderr_result[0] = _drain_text_stream(
+                    proc.stderr, MAX_OUTPUT_BYTES, proc.pid, exceeded
+                )
+
+            t_out = threading.Thread(target=_read_stdout, daemon=True)
+            t_err = threading.Thread(target=_read_stderr, daemon=True)
+            t_out.start()
+            t_err.start()
+
+            remaining = timeout - (time.time() - start)
+            t_out.join(timeout=max(0, remaining))
+            remaining = timeout - (time.time() - start)
+            t_err.join(timeout=max(0, remaining))
+
+            if t_out.is_alive() or t_err.is_alive():
                 _kill_process_tree(proc.pid)
                 proc.wait()
                 raise ClaudeError(f"Timeout after {timeout}s", -1)
 
-            if len(stdout) > MAX_OUTPUT_BYTES or len(stderr) > MAX_OUTPUT_BYTES:
+            proc.wait()
+
+            if exceeded[0]:
                 raise ClaudeError("Subprocess output exceeded maximum allowed size", -1)
 
+            stdout = stdout_result[0] or ""
+            stderr = stderr_result[0] or ""
             duration = time.time() - start
 
             if is_usage_limited(stdout, stderr):
@@ -196,7 +266,9 @@ class ClaudeRunner:
                 if i < len(self.accounts) - 1:
                     next_acct = self.accounts[i + 1] or "default"
                     logger.warning(
-                        f"Account '{home_dir or 'default'}' hit usage limit, trying '{next_acct}'"
+                        "Account %r hit usage limit, trying %r",
+                        home_dir or "default",
+                        next_acct,
                     )
                     continue
                 raise ClaudeError("All Claude accounts hit usage limits", 1)
@@ -227,6 +299,7 @@ class ClaudeRunner:
         Pipes the prompt via stdin. On usage limit errors, retries with
         the next account in the list.
         """
+        _validate_timeout(timeout)
         cmd = _build_cmd(model, tools)
         if cwd is not None:
             resolved_cwd = Path(cwd).resolve()
@@ -239,7 +312,7 @@ class ClaudeRunner:
 
         for i, home_dir in enumerate(self.accounts):
             if self._cache.is_limited(home_dir):
-                logger.debug(f"Skipping rate-limited account '{home_dir or 'default'}'")
+                logger.debug("Skipping rate-limited account %r", home_dir or "default")
                 continue
 
             start = time.time()
@@ -257,21 +330,49 @@ class ClaudeRunner:
                 start_new_session=not is_win,
             )
 
+            pid = proc.pid
+
+            async def _drain_async(stream, max_bytes: int):
+                """Read an async stream with a size limit."""
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = await stream.read(8192)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        _kill_process_tree(pid)
+                        raise ClaudeError(
+                            "Subprocess output exceeded maximum allowed size", -1
+                        )
+                    chunks.append(chunk)
+                return b"".join(chunks)
+
+            async def _communicate():
+                if proc.stdin:
+                    proc.stdin.write(prompt.encode())
+                    await proc.stdin.drain()
+                    proc.stdin.close()
+                try:
+                    stdout_bytes, stderr_bytes = await asyncio.gather(
+                        _drain_async(proc.stdout, MAX_OUTPUT_BYTES),
+                        _drain_async(proc.stderr, MAX_OUTPUT_BYTES),
+                    )
+                except ClaudeError:
+                    await proc.wait()
+                    raise
+                await proc.wait()
+                return stdout_bytes.decode(), stderr_bytes.decode()
+
             try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(input=prompt.encode()),
-                    timeout=timeout,
+                stdout, stderr = await asyncio.wait_for(
+                    _communicate(), timeout=timeout
                 )
             except asyncio.TimeoutError:
-                _kill_process_tree(proc.pid)
+                _kill_process_tree(pid)
                 await proc.wait()
                 raise ClaudeError("Timeout exceeded", -1)
-
-            stdout = stdout_bytes.decode()
-            stderr = stderr_bytes.decode()
-
-            if len(stdout) > MAX_OUTPUT_BYTES or len(stderr) > MAX_OUTPUT_BYTES:
-                raise ClaudeError("Subprocess output exceeded maximum allowed size", -1)
 
             duration = time.time() - start
 
@@ -280,7 +381,9 @@ class ClaudeRunner:
                 if i < len(self.accounts) - 1:
                     next_acct = self.accounts[i + 1] or "default"
                     logger.warning(
-                        f"Account '{home_dir or 'default'}' hit usage limit, trying '{next_acct}'"
+                        "Account %r hit usage limit, trying %r",
+                        home_dir or "default",
+                        next_acct,
                     )
                     continue
                 raise ClaudeError("All Claude accounts hit usage limits", 1)

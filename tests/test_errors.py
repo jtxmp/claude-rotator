@@ -48,3 +48,11 @@ class TestClaudeError:
     def test_raw_stderr_preserved(self):
         error = ClaudeError("sk-ant-api-key-12345 failed", 1)
         assert error.stderr == "sk-ant-api-key-12345 failed"
+
+    def test_redacts_tokens_straddling_500_char_boundary(self):
+        """Tokens near the truncation boundary are redacted before truncation."""
+        padding = "x" * 490
+        stderr = f"{padding}sk-ant-secret-token-12345 more text"
+        error = ClaudeError(stderr, 1)
+        assert "sk-ant-" not in str(error)
+        assert "secret-token" not in str(error)

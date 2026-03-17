@@ -11,10 +11,10 @@ _SENSITIVE_PATTERNS = [
 
 def _sanitize_stderr(stderr: str) -> str:
     """Redact sensitive tokens and keys from stderr before including in error messages."""
-    result = stderr[:500]
+    result = stderr
     for pattern in _SENSITIVE_PATTERNS:
         result = pattern.sub("[REDACTED]", result)
-    return result
+    return result[:500]
 
 
 class ClaudeError(Exception):

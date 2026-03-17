@@ -37,7 +37,7 @@ class RateLimitCache:
         if reset_time:
             self._until[account] = reset_time
             label = account or "default"
-            logger.info(f"Account '{label}' rate-limited until {reset_time.isoformat()}")
+            logger.info("Account %r rate-limited until %s", label, reset_time.isoformat())
         else:
             fallback = datetime.now(timezone.utc) + timedelta(minutes=5)
             self._until[account] = fallback
@@ -71,6 +71,8 @@ def parse_reset_time(stdout: str, stderr: str) -> datetime | None:
     if not match:
         return None
     hour = int(match.group(1))
+    if hour < 1 or hour > 12:
+        return None
     ampm = match.group(2).lower()
     if ampm == "pm" and hour != 12:
         hour += 12

@@ -276,6 +276,20 @@ describe("ClaudeRunner", () => {
       runner.run({ prompt: "test", cwd: "/nonexistent/path/abc123" }),
     ).rejects.toThrow(/does not exist/);
   });
+
+  it("rejects zero timeout", async () => {
+    const runner = new ClaudeRunner({ accounts: [null] });
+    await expect(
+      runner.run({ prompt: "test", timeout: 0 }),
+    ).rejects.toThrow("Timeout must be between");
+  });
+
+  it("rejects timeout over 3600", async () => {
+    const runner = new ClaudeRunner({ accounts: [null] });
+    await expect(
+      runner.run({ prompt: "test", timeout: 3601 }),
+    ).rejects.toThrow("Timeout must be between");
+  });
 });
 
 describe("ClaudeError sanitization", () => {
@@ -294,5 +308,15 @@ describe("ClaudeError sanitization", () => {
     const error = new ClaudeError("Bearer eyJhbGciOiJIUz", 1);
     expect(error.message).not.toContain("eyJhbGciOiJIUz");
     expect(error.message).toContain("[REDACTED]");
+  });
+
+  it("redacts tokens that straddle the 500-char boundary", () => {
+    // Token starts near position 500. If we truncated first, the partial
+    // token would leak. Redacting first ensures the secret is removed.
+    const padding = "x".repeat(490);
+    const stderr = `${padding}sk-ant-secret-token-12345 more text`;
+    const error = new ClaudeError(stderr, 1);
+    expect(error.message).not.toContain("sk-ant-");
+    expect(error.message).not.toContain("secret-token");
   });
 });

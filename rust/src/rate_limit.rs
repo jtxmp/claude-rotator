@@ -8,11 +8,11 @@ const USAGE_LIMIT_PHRASES: &[&str] = &["out of extra usage", "usage limit", "rat
 static RESET_TIME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)resets\s+(\d{1,2})(am|pm)\s*\(UTC\)").unwrap());
 
-pub fn is_usage_limited(stdout: &str, stderr: &str) -> bool {
-    let combined = format!("{}{}", stdout, stderr).to_lowercase();
+pub fn is_usage_limited(_stdout: &str, stderr: &str) -> bool {
+    let text = stderr.to_lowercase();
     USAGE_LIMIT_PHRASES
         .iter()
-        .any(|phrase| combined.contains(phrase))
+        .any(|phrase| text.contains(phrase))
 }
 
 pub fn parse_reset_time(stdout: &str, stderr: &str) -> Option<SystemTime> {
@@ -20,6 +20,9 @@ pub fn parse_reset_time(stdout: &str, stderr: &str) -> Option<SystemTime> {
     let caps = RESET_TIME_RE.captures(&combined)?;
 
     let mut hour: u32 = caps[1].parse().ok()?;
+    if hour < 1 || hour > 12 {
+        return None;
+    }
     let ampm = caps[2].to_lowercase();
     if ampm == "pm" && hour != 12 {
         hour += 12;
@@ -109,23 +112,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_detects_out_of_extra_usage() {
-        assert!(is_usage_limited("You are out of extra usage for today", ""));
+    fn test_detects_out_of_extra_usage_in_stderr() {
+        assert!(is_usage_limited("", "You are out of extra usage for today"));
     }
 
     #[test]
-    fn test_detects_usage_limit() {
+    fn test_detects_usage_limit_in_stderr() {
         assert!(is_usage_limited("", "usage limit reached"));
     }
 
     #[test]
-    fn test_detects_rate_limit() {
-        assert!(is_usage_limited("rate limit exceeded", ""));
+    fn test_detects_rate_limit_in_stderr() {
+        assert!(is_usage_limited("", "rate limit exceeded"));
     }
 
     #[test]
     fn test_case_insensitive() {
-        assert!(is_usage_limited("USAGE LIMIT", ""));
+        assert!(is_usage_limited("", "USAGE LIMIT"));
     }
 
     #[test]
@@ -136,6 +139,21 @@ mod tests {
     #[test]
     fn test_empty_strings() {
         assert!(!is_usage_limited("", ""));
+    }
+
+    #[test]
+    fn test_ignores_stdout_content() {
+        assert!(!is_usage_limited("You hit the usage limit", ""));
+    }
+
+    #[test]
+    fn test_ignores_rate_limit_in_stdout_only() {
+        assert!(!is_usage_limited("rate limit exceeded", ""));
+    }
+
+    #[test]
+    fn test_detects_when_phrase_in_stderr_with_noisy_stdout() {
+        assert!(is_usage_limited("normal output", "usage limit reached"));
     }
 
     #[test]

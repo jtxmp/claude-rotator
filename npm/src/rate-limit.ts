@@ -15,6 +15,7 @@ export function parseResetTime(stdout: string, stderr: string): Date | null {
   if (!match) return null;
 
   let hour = parseInt(match[1], 10);
+  if (hour < 1 || hour > 12) return null;
   const ampm = match[2].toLowerCase();
   if (ampm === "pm" && hour !== 12) hour += 12;
   else if (ampm === "am" && hour === 12) hour = 0;

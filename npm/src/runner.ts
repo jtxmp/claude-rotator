@@ -25,6 +25,8 @@ export interface ClaudeRunnerOptions {
 }
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024; // 50 MB
+const MIN_TIMEOUT = 1;
+const MAX_TIMEOUT = 3600;
 
 const VALID_MODEL_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const VALID_TOOLS_PATTERN = /^[A-Za-z_]+(,[A-Za-z_]+)*$/;
@@ -131,6 +133,12 @@ export class ClaudeRunner {
       cwd,
       timeout = 600,
     } = options;
+
+    if (timeout < MIN_TIMEOUT || timeout > MAX_TIMEOUT) {
+      throw new Error(
+        `Timeout must be between ${MIN_TIMEOUT} and ${MAX_TIMEOUT} seconds`,
+      );
+    }
 
     const cmd = buildCmd(model, tools);
     const [command, ...args] = cmd;

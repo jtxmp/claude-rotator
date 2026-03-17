@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,19 +15,62 @@ import pytest
 from claude_rotator import ClaudeError, ClaudeResult, ClaudeRunner
 from claude_rotator.runner import (
     MAX_OUTPUT_BYTES,
+    MIN_TIMEOUT,
+    MAX_TIMEOUT,
     _build_cmd,
     _build_env,
     _kill_process_tree,
     _validate_inputs,
+    _validate_timeout,
 )
 
 
 def _make_popen(stdout: str, stderr: str = "", returncode: int = 0):
-    """Create a mock Popen that returns the given output."""
+    """Create a mock Popen with readable streams for threaded I/O."""
     proc = MagicMock()
-    proc.communicate.return_value = (stdout, stderr)
+    proc.stdout = StringIO(stdout)
+    proc.stderr = StringIO(stderr)
+    proc.stdin = MagicMock()
     proc.returncode = returncode
     proc.pid = 12345
+    proc.wait.return_value = returncode
+    return proc
+
+
+def _popen_factory(stdout: str, stderr: str = "", returncode: int = 0):
+    """Return a callable that creates a fresh mock Popen each time."""
+    def factory(*args, **kwargs):
+        return _make_popen(stdout, stderr, returncode)
+    return factory
+
+
+def _make_async_proc(stdout: bytes, stderr: bytes = b"", returncode: int = 0, pid: int = 99999):
+    """Create a mock async subprocess with readable streams."""
+    proc = MagicMock()
+    proc.pid = pid
+    proc.returncode = returncode
+
+    # stdin mock with async drain
+    stdin = MagicMock()
+    stdin.drain = AsyncMock()
+    stdin.close = MagicMock()
+    proc.stdin = stdin
+
+    # stdout mock: async read returns data once, then b""
+    stdout_stream = MagicMock()
+    stdout_chunks = iter([stdout, b""])
+    stdout_stream.read = AsyncMock(side_effect=lambda n: next(stdout_chunks, b""))
+    proc.stdout = stdout_stream
+
+    # stderr mock: async read returns data once, then b""
+    stderr_stream = MagicMock()
+    stderr_chunks = iter([stderr, b""])
+    stderr_stream.read = AsyncMock(side_effect=lambda n: next(stderr_chunks, b""))
+    proc.stderr = stderr_stream
+
+    proc.wait = AsyncMock(return_value=None)
+    # Set returncode after wait
+    type(proc).returncode = returncode
     return proc
 
 
@@ -93,6 +137,29 @@ class TestBuildCmd:
             _build_cmd("sonnet", "Read --inject")
 
 
+class TestValidateTimeout:
+    def test_valid_timeout(self):
+        _validate_timeout(600)
+
+    def test_min_timeout(self):
+        _validate_timeout(MIN_TIMEOUT)
+
+    def test_max_timeout(self):
+        _validate_timeout(MAX_TIMEOUT)
+
+    def test_zero_timeout_raises(self):
+        with pytest.raises(ValueError, match="Timeout must be between"):
+            _validate_timeout(0)
+
+    def test_negative_timeout_raises(self):
+        with pytest.raises(ValueError, match="Timeout must be between"):
+            _validate_timeout(-1)
+
+    def test_too_large_timeout_raises(self):
+        with pytest.raises(ValueError, match="Timeout must be between"):
+            _validate_timeout(MAX_TIMEOUT + 1)
+
+
 class TestClaudeRunnerSync:
     def test_successful_run(self):
         output = json.dumps({"result": "Hello", "total_cost_usd": 0.01})
@@ -140,11 +207,14 @@ class TestClaudeRunnerSync:
         assert result.output == "OK"
 
     def test_all_accounts_exhausted_raises(self, tmp_path):
-        rate_limited = _make_popen("", stderr="usage limit reached", returncode=0)
         fallback = str(tmp_path / "fallback")
         os.makedirs(fallback)
         runner = ClaudeRunner(accounts=[None, fallback])
-        with patch("claude_rotator.runner.subprocess.Popen", return_value=rate_limited):
+        # Use side_effect factory so each Popen call gets fresh StringIO streams
+        with patch(
+            "claude_rotator.runner.subprocess.Popen",
+            side_effect=_popen_factory("", stderr="usage limit reached", returncode=0),
+        ):
             with pytest.raises(ClaudeError, match="All Claude accounts"):
                 runner.run(prompt="test")
 
@@ -169,18 +239,31 @@ class TestClaudeRunnerSync:
         assert result.output == "OK"
 
     def test_timeout_raises(self):
-        import subprocess as sp
-
+        """Threads that block past the deadline trigger a timeout error."""
         proc = MagicMock()
-        proc.communicate.side_effect = sp.TimeoutExpired(cmd="claude", timeout=10)
         proc.pid = 12345
         proc.wait.return_value = None
+        proc.stdin = MagicMock()
+
+        # Simulate a stream that blocks longer than the timeout
+        import time as _time
+
+        def blocking_read(_n=None):
+            _time.sleep(3)
+            return ""
+
+        stdout_stream = MagicMock()
+        stdout_stream.read = blocking_read
+        stderr_stream = MagicMock()
+        stderr_stream.read = blocking_read
+        proc.stdout = stdout_stream
+        proc.stderr = stderr_stream
 
         runner = ClaudeRunner(accounts=[None])
         with patch("claude_rotator.runner.subprocess.Popen", return_value=proc):
             with patch("claude_rotator.runner._kill_process_tree"):
                 with pytest.raises(ClaudeError, match="Timeout"):
-                    runner.run(prompt="test", timeout=10)
+                    runner.run(prompt="test", timeout=1)
 
     def test_cost_from_nested_format(self):
         output = json.dumps({"result": "Hi", "cost": {"total_usd": 0.05}})
@@ -220,8 +303,19 @@ class TestClaudeRunnerSync:
         runner = ClaudeRunner(accounts=[None])
         proc = _make_popen(huge_stdout)
         with patch("claude_rotator.runner.subprocess.Popen", return_value=proc):
-            with pytest.raises(ClaudeError, match="exceeded maximum"):
-                runner.run(prompt="test")
+            with patch("claude_rotator.runner._kill_process_tree"):
+                with pytest.raises(ClaudeError, match="exceeded maximum"):
+                    runner.run(prompt="test")
+
+    def test_timeout_validation_rejects_zero(self):
+        runner = ClaudeRunner(accounts=[None])
+        with pytest.raises(ValueError, match="Timeout must be between"):
+            runner.run(prompt="test", timeout=0)
+
+    def test_timeout_validation_rejects_too_large(self):
+        runner = ClaudeRunner(accounts=[None])
+        with pytest.raises(ValueError, match="Timeout must be between"):
+            runner.run(prompt="test", timeout=MAX_TIMEOUT + 1)
 
 
 class TestClaudeRunnerAsync:
@@ -230,11 +324,7 @@ class TestClaudeRunnerAsync:
 
         async def _run():
             runner = ClaudeRunner(accounts=[None])
-
-            proc = AsyncMock()
-            proc.communicate.return_value = (output.encode(), b"")
-            proc.returncode = 0
-            proc.pid = 99999
+            proc = _make_async_proc(output.encode(), b"", 0)
 
             with patch("claude_rotator.runner.asyncio.create_subprocess_exec", return_value=proc):
                 return await runner.run_async(prompt="test", model="opus")
@@ -245,7 +335,7 @@ class TestClaudeRunnerAsync:
         assert result.model == "opus"
 
     def test_async_rate_limit_rotation(self, tmp_path):
-        success_output = json.dumps({"result": "OK", "total_cost_usd": 0.0}).encode()
+        success_output = json.dumps({"result": "OK", "total_cost_usd": 0.0})
         fallback = str(tmp_path / "fallback")
         os.makedirs(fallback)
 
@@ -253,15 +343,8 @@ class TestClaudeRunnerAsync:
             runner = ClaudeRunner(accounts=[None, fallback])
 
             # Rate limit phrase in stderr
-            proc1 = AsyncMock()
-            proc1.communicate.return_value = (b"", b"You hit the usage limit")
-            proc1.returncode = 0
-            proc1.pid = 11111
-
-            proc2 = AsyncMock()
-            proc2.communicate.return_value = (success_output, b"")
-            proc2.returncode = 0
-            proc2.pid = 22222
+            proc1 = _make_async_proc(b"", b"You hit the usage limit", 0, pid=11111)
+            proc2 = _make_async_proc(success_output.encode(), b"", 0, pid=22222)
 
             with patch(
                 "claude_rotator.runner.asyncio.create_subprocess_exec",

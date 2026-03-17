@@ -100,6 +100,10 @@ Then pass the directories to `ClaudeRunner`:
 runner = ClaudeRunner(accounts=[None, "/home/user/.claude_alt"])
 ```
 
+## Security
+
+Audit reports are in [`audits/`](audits/). If you find a vulnerability, please open an issue or submit a PR. Independent audits and security contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+
 ## License
 
 MIT

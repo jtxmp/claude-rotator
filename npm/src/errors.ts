@@ -5,11 +5,11 @@ const SENSITIVE_PATTERNS = [
 ];
 
 function sanitizeStderr(stderr: string): string {
-  let result = stderr.slice(0, 500);
+  let result = stderr;
   for (const pattern of SENSITIVE_PATTERNS) {
     result = result.replace(pattern, "[REDACTED]");
   }
-  return result;
+  return result.slice(0, 500);
 }
 
 export class ClaudeError extends Error {
