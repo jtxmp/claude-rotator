@@ -64,6 +64,8 @@ def _build_cmd(model: str, allowed_tools: str | None, system_prompt: str | None 
         "--output-format",
         "json",
     ]
+    if system_prompt is not None and system_prompt.startswith("-"):
+        raise ValueError(f"system_prompt must not start with '-': {system_prompt!r}")
     if system_prompt is not None:
         cmd.extend(["--system-prompt", system_prompt])
     if allowed_tools:

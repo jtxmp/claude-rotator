@@ -153,6 +153,13 @@ class TestBuildCmd:
         assert "--system-prompt" not in cmd
 
 
+
+    def test_rejects_system_prompt_starting_with_dash(self):
+        with pytest.raises(ValueError, match="must not start with"):
+            _build_cmd("sonnet", None, system_prompt="--inject")
+        with pytest.raises(ValueError, match="must not start with"):
+            _build_cmd("sonnet", None, system_prompt="-flag")
+
 class TestValidateTimeout:
     def test_valid_timeout(self):
         _validate_timeout(600)

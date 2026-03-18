@@ -93,6 +93,12 @@ fn build_cmd(model: &str, tools: Option<&str>, system_prompt: Option<&str>) -> R
         "json".into(),
     ];
     if let Some(sp) = system_prompt {
+        if sp.starts_with('-') {
+            return Err(ClaudeError::new(
+                format!("system_prompt must not start with '-': {}", sp),
+                1,
+            ));
+        }
         cmd.push("--system-prompt".into());
         cmd.push(sp.into());
     }
@@ -721,5 +727,13 @@ mod tests {
         assert_eq!(cmd[tools_idx + 1], "Read,Write");
         // system-prompt should come before tools
         assert!(sp_idx < tools_idx);
+    }
+
+    #[test]
+    fn test_build_cmd_rejects_system_prompt_starting_with_dash() {
+        let result = build_cmd("sonnet", None, Some("--inject"));
+        assert!(result.is_err());
+        let result2 = build_cmd("sonnet", None, Some("-flag"));
+        assert!(result2.is_err());
     }
 }

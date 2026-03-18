@@ -301,6 +301,17 @@ describe("ClaudeRunner", () => {
     ).rejects.toThrow(/does not exist/);
   });
 
+
+  it("rejects systemPrompt starting with dash", async () => {
+    const runner = new ClaudeRunner({ accounts: [null] });
+    await expect(
+      runner.run({ prompt: "test", systemPrompt: "--inject" }),
+    ).rejects.toThrow("must not start with");
+    await expect(
+      runner.run({ prompt: "test", systemPrompt: "-flag" }),
+    ).rejects.toThrow("must not start with");
+  });
+
   it("rejects zero timeout", async () => {
     const runner = new ClaudeRunner({ accounts: [null] });
     await expect(

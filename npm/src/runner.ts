@@ -48,6 +48,9 @@ function buildCmd(model: string, tools: string | null | undefined, systemPrompt?
   validateInputs(model, tools);
   const cmd = ["claude", "-p", "--model", model, "--output-format", "json"];
   if (systemPrompt !== undefined) {
+    if (systemPrompt.startsWith("-")) {
+      throw new Error(`system_prompt must not start with '-': ${systemPrompt}`);
+    }
     cmd.push("--system-prompt", systemPrompt);
   }
   if (tools) {
