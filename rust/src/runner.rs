@@ -82,7 +82,7 @@ fn validate_directory(path: &Path, label: &str) -> Result<std::path::PathBuf, Cl
     Ok(canonical)
 }
 
-fn build_cmd(model: &str, tools: Option<&str>) -> Result<Vec<String>, ClaudeError> {
+fn build_cmd(model: &str, tools: Option<&str>, system_prompt: Option<&str>) -> Result<Vec<String>, ClaudeError> {
     validate_inputs(model, tools)?;
     let mut cmd = vec![
         "claude".into(),
@@ -92,6 +92,10 @@ fn build_cmd(model: &str, tools: Option<&str>) -> Result<Vec<String>, ClaudeErro
         "--output-format".into(),
         "json".into(),
     ];
+    if let Some(sp) = system_prompt {
+        cmd.push("--system-prompt".into());
+        cmd.push(sp.into());
+    }
     if let Some(t) = tools {
         cmd.push("--allowedTools".into());
         cmd.push(t.into());
@@ -213,13 +217,14 @@ impl ClaudeRunner {
     pub fn run(
         &mut self,
         prompt: &str,
+        system_prompt: Option<&str>,
         model: &str,
         tools: Option<&str>,
         cwd: Option<&Path>,
         timeout_secs: u64,
     ) -> Result<ClaudeResult, ClaudeError> {
         validate_timeout(timeout_secs)?;
-        let cmd_parts = build_cmd(model, tools)?;
+        let cmd_parts = build_cmd(model, tools, system_prompt)?;
         let program = &cmd_parts[0];
         let args = &cmd_parts[1..];
 
@@ -324,6 +329,7 @@ impl ClaudeRunner {
     pub async fn run_async(
         &mut self,
         prompt: &str,
+        system_prompt: Option<&str>,
         model: &str,
         tools: Option<&str>,
         cwd: Option<&Path>,
@@ -333,7 +339,7 @@ impl ClaudeRunner {
         use tokio::process::Command as TokioCommand;
 
         validate_timeout(timeout_secs)?;
-        let cmd_parts = build_cmd(model, tools)?;
+        let cmd_parts = build_cmd(model, tools, system_prompt)?;
         let program = &cmd_parts[0];
         let args = &cmd_parts[1..];
 
@@ -573,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_build_cmd_with_tools() {
-        let cmd = build_cmd("sonnet", Some("Read,Write")).unwrap();
+        let cmd = build_cmd("sonnet", Some("Read,Write"), None).unwrap();
         assert_eq!(
             cmd,
             vec![
@@ -591,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_build_cmd_without_tools() {
-        let cmd = build_cmd("opus", None).unwrap();
+        let cmd = build_cmd("opus", None, None).unwrap();
         assert_eq!(
             cmd,
             vec!["claude", "-p", "--model", "opus", "--output-format", "json"]
@@ -601,19 +607,19 @@ mod tests {
 
     #[test]
     fn test_build_cmd_rejects_invalid_model() {
-        let result = build_cmd("sonnet --flag", None);
+        let result = build_cmd("sonnet --flag", None, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_build_cmd_rejects_invalid_tools() {
-        let result = build_cmd("sonnet", Some("Read --inject"));
+        let result = build_cmd("sonnet", Some("Read --inject"), None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_build_cmd_accepts_full_model_id() {
-        let result = build_cmd("claude-sonnet-4-5-20250514", None);
+        let result = build_cmd("claude-sonnet-4-5-20250514", None, None);
         assert!(result.is_ok());
     }
 
@@ -690,5 +696,30 @@ mod tests {
         let (buf, exceeded) = read_limited(&mut cursor, 50);
         assert!(exceeded);
         assert_eq!(buf.len(), 50);
+    }
+
+    #[test]
+    fn test_build_cmd_with_system_prompt() {
+        let cmd = build_cmd("sonnet", None, Some("You are helpful")).unwrap();
+        assert!(cmd.contains(&"--system-prompt".to_string()));
+        let idx = cmd.iter().position(|x| x == "--system-prompt").unwrap();
+        assert_eq!(cmd[idx + 1], "You are helpful");
+    }
+
+    #[test]
+    fn test_build_cmd_without_system_prompt() {
+        let cmd = build_cmd("sonnet", None, None).unwrap();
+        assert!(!cmd.contains(&"--system-prompt".to_string()));
+    }
+
+    #[test]
+    fn test_build_cmd_with_system_prompt_and_tools() {
+        let cmd = build_cmd("sonnet", Some("Read,Write"), Some("Be concise")).unwrap();
+        let sp_idx = cmd.iter().position(|x| x == "--system-prompt").unwrap();
+        let tools_idx = cmd.iter().position(|x| x == "--allowedTools").unwrap();
+        assert_eq!(cmd[sp_idx + 1], "Be concise");
+        assert_eq!(cmd[tools_idx + 1], "Read,Write");
+        // system-prompt should come before tools
+        assert!(sp_idx < tools_idx);
     }
 }

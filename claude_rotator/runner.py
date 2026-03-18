@@ -54,7 +54,7 @@ class ClaudeResult:
     model: str
 
 
-def _build_cmd(model: str, allowed_tools: str | None) -> list[str]:
+def _build_cmd(model: str, allowed_tools: str | None, system_prompt: str | None = None) -> list[str]:
     _validate_inputs(model, allowed_tools)
     cmd = [
         "claude",
@@ -64,6 +64,8 @@ def _build_cmd(model: str, allowed_tools: str | None) -> list[str]:
         "--output-format",
         "json",
     ]
+    if system_prompt:
+        cmd.extend(["--system-prompt", system_prompt])
     if allowed_tools:
         cmd.extend(["--allowedTools", allowed_tools])
     return cmd
@@ -172,6 +174,7 @@ class ClaudeRunner:
         prompt: str,
         model: str = "sonnet",
         tools: str | None = None,
+        system_prompt: str | None = None,
         cwd: Path | str | None = None,
         timeout: int = 600,
     ) -> ClaudeResult:
@@ -181,7 +184,7 @@ class ClaudeRunner:
         the next account in the list.
         """
         _validate_timeout(timeout)
-        cmd = _build_cmd(model, tools)
+        cmd = _build_cmd(model, tools, system_prompt)
         if cwd is not None:
             resolved_cwd = Path(cwd).resolve()
             if not resolved_cwd.is_dir():
@@ -291,6 +294,7 @@ class ClaudeRunner:
         prompt: str,
         model: str = "sonnet",
         tools: str | None = None,
+        system_prompt: str | None = None,
         cwd: Path | str | None = None,
         timeout: int = 600,
     ) -> ClaudeResult:
@@ -300,7 +304,7 @@ class ClaudeRunner:
         the next account in the list.
         """
         _validate_timeout(timeout)
-        cmd = _build_cmd(model, tools)
+        cmd = _build_cmd(model, tools, system_prompt)
         if cwd is not None:
             resolved_cwd = Path(cwd).resolve()
             if not resolved_cwd.is_dir():

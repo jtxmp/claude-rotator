@@ -24,7 +24,7 @@ runner = ClaudeRunner(
     ],
 )
 
-result = runner.run(prompt="Explain this code", model="sonnet")
+result = runner.run(prompt="Explain this code", model="sonnet", system_prompt="You are a code reviewer")
 print(result.output)
 print(f"Cost: ${result.cost_usd:.4f}")
 print(f"Duration: {result.duration_seconds:.1f}s")
@@ -35,7 +35,7 @@ When the first account hits a rate limit, claude-rotator detects it, caches the 
 ## Async
 
 ```python
-result = await runner.run_async(prompt="Summarize", model="opus")
+result = await runner.run_async(prompt="Summarize", model="opus", system_prompt="Be concise")
 ```
 
 ## API
@@ -55,6 +55,7 @@ runner.run(
     prompt="...",
     model="sonnet",           # "sonnet", "opus", or full model ID
     tools="Read,Write",       # allowed tools (None to omit)
+    system_prompt="...",     # optional system prompt
     cwd=Path("."),            # working directory
     timeout=600,              # seconds
 )

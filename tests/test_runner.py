@@ -137,6 +137,22 @@ class TestBuildCmd:
             _build_cmd("sonnet", "Read --inject")
 
 
+
+    def test_with_system_prompt(self):
+        cmd = _build_cmd("sonnet", None, system_prompt="You are helpful")
+        assert "--system-prompt" in cmd
+        idx = cmd.index("--system-prompt")
+        assert cmd[idx + 1] == "You are helpful"
+
+    def test_without_system_prompt(self):
+        cmd = _build_cmd("sonnet", None)
+        assert "--system-prompt" not in cmd
+
+    def test_system_prompt_none_omits_flag(self):
+        cmd = _build_cmd("sonnet", "Read", None)
+        assert "--system-prompt" not in cmd
+
+
 class TestValidateTimeout:
     def test_valid_timeout(self):
         _validate_timeout(600)
@@ -318,6 +334,26 @@ class TestClaudeRunnerSync:
             runner.run(prompt="test", timeout=MAX_TIMEOUT + 1)
 
 
+
+    def test_system_prompt_passed_to_subprocess(self):
+        output = json.dumps({"result": "OK"})
+        runner = ClaudeRunner(accounts=[None])
+        with patch("claude_rotator.runner.subprocess.Popen", return_value=_make_popen(output)) as mock_popen:
+            runner.run(prompt="test", system_prompt="Be concise")
+        cmd = mock_popen.call_args[0][0]
+        assert "--system-prompt" in cmd
+        idx = cmd.index("--system-prompt")
+        assert cmd[idx + 1] == "Be concise"
+
+    def test_no_system_prompt_omits_flag(self):
+        output = json.dumps({"result": "OK"})
+        runner = ClaudeRunner(accounts=[None])
+        with patch("claude_rotator.runner.subprocess.Popen", return_value=_make_popen(output)) as mock_popen:
+            runner.run(prompt="test")
+        cmd = mock_popen.call_args[0][0]
+        assert "--system-prompt" not in cmd
+
+
 class TestClaudeRunnerAsync:
     def test_successful_async_run(self):
         output = json.dumps({"result": "Async hello", "total_cost_usd": 0.03})
@@ -362,6 +398,22 @@ class TestClaudeRunnerAsync:
 
         with pytest.raises(ValueError, match="cwd is not an existing directory"):
             asyncio.run(_run())
+
+
+
+    def test_async_system_prompt_passed(self):
+        output = json.dumps({"result": "OK", "total_cost_usd": 0.0})
+        async def _run():
+            runner = ClaudeRunner(accounts=[None])
+            proc = _make_async_proc(output.encode(), b"", 0)
+            with patch("claude_rotator.runner.asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+                await runner.run_async(prompt="test", system_prompt="Be concise")
+            # The command parts are passed as positional args to create_subprocess_exec
+            call_args = mock_exec.call_args[0]
+            assert "--system-prompt" in call_args
+            idx = list(call_args).index("--system-prompt")
+            assert call_args[idx + 1] == "Be concise"
+        asyncio.run(_run())
 
 
 class TestBuildEnv:

@@ -25,6 +25,7 @@ const runner = new ClaudeRunner({
 const result = await runner.run({
   prompt: "Explain this code",
   model: "sonnet",
+  systemPrompt: "You are a code reviewer",
 });
 
 console.log(result.output);
@@ -42,6 +43,7 @@ console.log(`Duration: ${result.durationSeconds.toFixed(1)}s`);
 
 - `prompt`: The prompt text (piped via stdin)
 - `model`: `"sonnet"`, `"opus"`, or a full model ID (default: `"sonnet"`)
+- `systemPrompt`: Optional system prompt for Claude
 - `tools`: Allowed tools string, or `null` to omit (default: `"Read,Write"`)
 - `cwd`: Working directory (default: current)
 - `timeout`: Seconds before killing the process (default: `600`)
