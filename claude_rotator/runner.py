@@ -64,7 +64,7 @@ def _build_cmd(model: str, allowed_tools: str | None, system_prompt: str | None 
         "--output-format",
         "json",
     ]
-    if system_prompt:
+    if system_prompt is not None:
         cmd.extend(["--system-prompt", system_prompt])
     if allowed_tools:
         cmd.extend(["--allowedTools", allowed_tools])

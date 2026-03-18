@@ -217,11 +217,11 @@ impl ClaudeRunner {
     pub fn run(
         &mut self,
         prompt: &str,
-        system_prompt: Option<&str>,
         model: &str,
         tools: Option<&str>,
         cwd: Option<&Path>,
         timeout_secs: u64,
+        system_prompt: Option<&str>,
     ) -> Result<ClaudeResult, ClaudeError> {
         validate_timeout(timeout_secs)?;
         let cmd_parts = build_cmd(model, tools, system_prompt)?;
@@ -329,11 +329,11 @@ impl ClaudeRunner {
     pub async fn run_async(
         &mut self,
         prompt: &str,
-        system_prompt: Option<&str>,
         model: &str,
         tools: Option<&str>,
         cwd: Option<&Path>,
         timeout_secs: u64,
+        system_prompt: Option<&str>,
     ) -> Result<ClaudeResult, ClaudeError> {
         use tokio::io::AsyncWriteExt;
         use tokio::process::Command as TokioCommand;

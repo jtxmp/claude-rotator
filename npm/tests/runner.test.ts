@@ -264,6 +264,7 @@ describe("ClaudeRunner", () => {
     const args = mockSpawn.mock.calls[0][1] as string[];
     expect(args).not.toContain("--system-prompt");
   });
+
   it("defaults model to sonnet", async () => {
     const output = JSON.stringify({ result: "OK" });
     mockSpawn.mockImplementation(mockSpawnFactory(output));

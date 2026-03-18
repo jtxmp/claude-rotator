@@ -47,7 +47,7 @@ function validateInputs(
 function buildCmd(model: string, tools: string | null | undefined, systemPrompt?: string): string[] {
   validateInputs(model, tools);
   const cmd = ["claude", "-p", "--model", model, "--output-format", "json"];
-  if (systemPrompt) {
+  if (systemPrompt !== undefined) {
     cmd.push("--system-prompt", systemPrompt);
   }
   if (tools) {
