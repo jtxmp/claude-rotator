@@ -152,8 +152,6 @@ class TestBuildCmd:
         cmd = _build_cmd("sonnet", "Read", None)
         assert "--system-prompt" not in cmd
 
-
-
     def test_rejects_system_prompt_starting_with_dash(self):
         with pytest.raises(ValueError, match="must not start with"):
             _build_cmd("sonnet", None, system_prompt="--inject")
