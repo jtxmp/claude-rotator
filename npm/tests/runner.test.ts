@@ -241,6 +241,30 @@ describe("ClaudeRunner", () => {
     expect(runner.accounts).toEqual([null]);
   });
 
+  it("includes --system-prompt when systemPrompt is provided", async () => {
+    const output = JSON.stringify({ result: "OK" });
+    mockSpawn.mockImplementation(mockSpawnFactory(output));
+
+    const runner = new ClaudeRunner({ accounts: [null] });
+    await runner.run({ prompt: "test", systemPrompt: "Be concise" });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain("--system-prompt");
+    const idx = args.indexOf("--system-prompt");
+    expect(args[idx + 1]).toBe("Be concise");
+  });
+
+  it("omits --system-prompt when systemPrompt is undefined", async () => {
+    const output = JSON.stringify({ result: "OK" });
+    mockSpawn.mockImplementation(mockSpawnFactory(output));
+
+    const runner = new ClaudeRunner({ accounts: [null] });
+    await runner.run({ prompt: "test" });
+
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain("--system-prompt");
+  });
+
   it("defaults model to sonnet", async () => {
     const output = JSON.stringify({ result: "OK" });
     mockSpawn.mockImplementation(mockSpawnFactory(output));
@@ -275,6 +299,17 @@ describe("ClaudeRunner", () => {
     await expect(
       runner.run({ prompt: "test", cwd: "/nonexistent/path/abc123" }),
     ).rejects.toThrow(/does not exist/);
+  });
+
+
+  it("rejects systemPrompt starting with dash", async () => {
+    const runner = new ClaudeRunner({ accounts: [null] });
+    await expect(
+      runner.run({ prompt: "test", systemPrompt: "--inject" }),
+    ).rejects.toThrow("must not start with");
+    await expect(
+      runner.run({ prompt: "test", systemPrompt: "-flag" }),
+    ).rejects.toThrow("must not start with");
   });
 
   it("rejects zero timeout", async () => {

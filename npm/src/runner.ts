@@ -16,6 +16,7 @@ export interface RunOptions {
   prompt: string;
   model?: string;
   tools?: string | null;
+  systemPrompt?: string;
   cwd?: string;
   timeout?: number;
 }
@@ -43,9 +44,15 @@ function validateInputs(
   }
 }
 
-function buildCmd(model: string, tools: string | null | undefined): string[] {
+function buildCmd(model: string, tools: string | null | undefined, systemPrompt?: string): string[] {
   validateInputs(model, tools);
   const cmd = ["claude", "-p", "--model", model, "--output-format", "json"];
+  if (systemPrompt !== undefined) {
+    if (systemPrompt.startsWith("-")) {
+      throw new Error(`system_prompt must not start with '-': ${systemPrompt}`);
+    }
+    cmd.push("--system-prompt", systemPrompt);
+  }
   if (tools) {
     cmd.push("--allowedTools", tools);
   }
@@ -130,6 +137,7 @@ export class ClaudeRunner {
       prompt,
       model = "sonnet",
       tools = null,
+      systemPrompt,
       cwd,
       timeout = 600,
     } = options;
@@ -140,7 +148,7 @@ export class ClaudeRunner {
       );
     }
 
-    const cmd = buildCmd(model, tools);
+    const cmd = buildCmd(model, tools, systemPrompt);
     const [command, ...args] = cmd;
     const isWin = platform() === "win32";
 

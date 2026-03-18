@@ -6,10 +6,10 @@ Run Claude CLI (`claude -p`) subprocesses with automatic multi-account rotation 
 
 ```toml
 [dependencies]
-claude-rotator = "1.0"
+claude-rotator = "1.2"
 
 # For async support:
-claude-rotator = { version = "1.0", features = ["async"] }
+claude-rotator = { version = "1.2", features = ["async"] }
 ```
 
 Requires `claude` CLI installed and authenticated on at least one account.
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("/home/user/.claude_alt".into()),   // fallback
     ]);
 
-    let result = runner.run("Explain this code", "sonnet", None, None, 600)?;
+    let result = runner.run("Explain this code", "sonnet", None, None, 600, Some("You are a code reviewer"))?;
     println!("{}", result.output);
     println!("Cost: ${:.4}", result.cost_usd);
     println!("Duration: {:.1}s", result.duration_seconds);
@@ -41,7 +41,7 @@ use claude_rotator::ClaudeRunner;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut runner = ClaudeRunner::new(vec![None]);
-    let result = runner.run_async("Summarize", "opus", None, None, 600).await?;
+    let result = runner.run_async("Summarize", "opus", None, None, 600, Some("Be concise")).await?;
     println!("{}", result.output);
     Ok(())
 }
@@ -53,13 +53,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - `accounts`: `Vec<Option<String>>` of HOME directory paths. `None` means the default HOME.
 
-### `runner.run(prompt, model, tools, cwd, timeout)`
+### `runner.run(prompt, model, tools, cwd, timeout, system_prompt)`
 
 - `prompt`: `&str`
 - `model`: `&str` ("sonnet", "opus", or full model ID)
 - `tools`: `Option<&str>` (e.g., `Some("Read,Write")`)
 - `cwd`: `Option<&Path>`
 - `timeout`: `u64` (seconds)
+- `system_prompt`: `Option<&str>` (optional system prompt)
 
 Returns `Result<ClaudeResult, ClaudeError>`.
 
