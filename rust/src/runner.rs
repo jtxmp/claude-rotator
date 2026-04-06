@@ -110,6 +110,13 @@ fn build_cmd(model: &str, tools: Option<&str>, system_prompt: Option<&str>) -> R
 }
 
 fn parse_output(stdout: &str) -> Result<(String, f64), ClaudeError> {
+    if stdout.trim().is_empty() {
+        return Err(ClaudeError::new(
+            "Claude returned empty output (possible credential or auth failure)",
+            1,
+        ));
+    }
+
     let mut cost = 0.0_f64;
     let mut output = stdout.to_string();
 
@@ -642,6 +649,18 @@ mod tests {
     #[test]
     fn test_validate_timeout_accepts_valid() {
         assert!(validate_timeout(600).is_ok());
+    }
+
+    #[test]
+    fn test_parse_output_empty_string() {
+        let err = parse_output("").unwrap_err();
+        assert!(err.stderr.contains("empty output"));
+    }
+
+    #[test]
+    fn test_parse_output_whitespace_only() {
+        let err = parse_output("  \n  ").unwrap_err();
+        assert!(err.stderr.contains("empty output"));
     }
 
     #[test]
