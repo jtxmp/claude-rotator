@@ -109,6 +109,17 @@ fn build_cmd(model: &str, tools: Option<&str>, system_prompt: Option<&str>) -> R
     Ok(cmd)
 }
 
+/// Extract error message from Claude CLI JSON stdout (used when exit_code != 0).
+/// Returns None if stdout isn't JSON or doesn't contain an error.
+fn extract_json_error(stdout: &str) -> Option<String> {
+    let data: serde_json::Value = serde_json::from_str(stdout).ok()?;
+    if data.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false) {
+        data.get("result").and_then(|v| v.as_str()).map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
 fn parse_output(stdout: &str) -> Result<(String, f64), ClaudeError> {
     if stdout.trim().is_empty() {
         return Err(ClaudeError::new(
@@ -188,10 +199,19 @@ fn build_env(home_dir: &Option<String>) -> Result<Vec<(String, String)>, ClaudeE
     if let Some(dir) = home_dir {
         let canonical = validate_directory(Path::new(dir), "Account home_dir")?;
         let dir_str = canonical.to_string_lossy().to_string();
-        env.retain(|(k, _)| k != "HOME" && k != "USERPROFILE");
+        env.retain(|(k, _)| k != "HOME" && k != "USERPROFILE" && k != "CLAUDE_CODE_OAUTH_TOKEN");
         env.push(("HOME".into(), dir_str.clone()));
         #[cfg(windows)]
-        env.push(("USERPROFILE".into(), dir_str));
+        env.push(("USERPROFILE".into(), dir_str.clone()));
+
+        // Load per-account OAuth token from .oauth_token file if present
+        let token_path = canonical.join(".oauth_token");
+        if let Ok(token) = std::fs::read_to_string(&token_path) {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                env.push(("CLAUDE_CODE_OAUTH_TOKEN".into(), token));
+            }
+        }
     }
     Ok(env)
 }
@@ -310,7 +330,8 @@ impl ClaudeRunner {
                     }
 
                     if output.exit_code != 0 {
-                        return Err(ClaudeError::new(output.stderr, output.exit_code));
+                        let error_msg = extract_json_error(&output.stdout).unwrap_or(output.stderr);
+                        return Err(ClaudeError::new(error_msg, output.exit_code));
                     }
 
                     let (output_text, cost) = parse_output(&output.stdout)?;
@@ -499,7 +520,10 @@ impl ClaudeRunner {
                     }
 
                     if exit_code != 0 {
-                        return Err(ClaudeError::new(stderr, exit_code));
+                        // Claude CLI outputs errors as JSON on stdout when using --output-format json,
+                        // so check stdout for error details before falling back to stderr
+                        let error_msg = extract_json_error(&stdout).unwrap_or(stderr);
+                        return Err(ClaudeError::new(error_msg, exit_code));
                     }
 
                     let (output_text, cost) = parse_output(&stdout)?;
